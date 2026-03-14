@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title></title>
+  <style>
+    :root {
+      --bg: #f5f1eb;
+      --card-bg: #fff;
+      --text: #2c2825;
+      --muted: #6b6560;
+      --accent: #8b6914;
+      --shadow: 0 2px 12px rgba(44, 40, 37, 0.08);
+      --shadow-drag: 0 12px 32px rgba(44, 40, 37, 0.18);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 2rem 1.5rem;
+    }
+
+    h1 {
+      font-family: Georgia, 'Times New Roman', serif;
+      font-size: 1.75rem;
+      font-weight: 400;
+      margin: 0 0 2rem;
+      color: var(--text);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 1.25rem;
+      align-content: start;
+    }
+
+    .item {
+      background: var(--card-bg);
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      cursor: grab;
+      transition: box-shadow 0.2s ease, transform 0.2s ease;
+      position: relative;
+    }
+
+    .item:hover {
+      box-shadow: 0 6px 20px rgba(44, 40, 37, 0.12);
+    }
+
+    .item.dragging {
+      cursor: grabbing;
+      box-shadow: var(--shadow-drag);
+      transform: scale(1.02);
+      z-index: 10;
+      opacity: 0.95;
+    }
+
+    .item.drag-over {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .item img {
+      display: block;
+      width: 100%;
+      height: 180px;
+      object-fit: cover;
+      pointer-events: none;
+    }
+
+    .loading, .error {
+      font-size: 1rem;
+      color: var(--muted);
+    }
+
+    .error {
+      color: #b54a4a;
+    }
+  </style>
+</head>
+<body>
+  <h1 id="title"></h1>
+  <div id="app">
+    <p class="loading">Loading images…</p>
+  </div>
+
+  <script>
+    const app = document.getElementById('app');
+
+    function shuffle(arr) {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+
+    async function loadImageList() {
+      const res = await fetch('/api/images');
+      if (!res.ok) throw new Error('Could not load images');
+      return res.json();
+    }
+
+    let imageList = [];
+
+    function render(orderedFilenames) {
+      const order = orderedFilenames || shuffle(imageList);
+
+      app.innerHTML = '';
+      const grid = document.createElement('div');
+      grid.className = 'grid';
+
+      order.forEach((filename, index) => {
+        const item = document.createElement('div');
+        item.className = 'item';
+        item.draggable = true;
+        item.dataset.index = index;
+        item.dataset.filename = filename;
+
+        const img = document.createElement('img');
+        img.src = '/img/' + encodeURIComponent(filename);
+        img.alt = filename;
+        img.loading = 'lazy';
+
+        item.append(img);
+
+        item.addEventListener('dragstart', onDragStart);
+        item.addEventListener('dragend', onDragEnd);
+        item.addEventListener('dragover', onDragOver);
+        item.addEventListener('dragleave', onDragLeave);
+        item.addEventListener('drop', onDrop);
+
+        grid.appendChild(item);
+      });
+
+      app.appendChild(grid);
+    }
+
+    let draggedEl = null;
+
+    function onDragStart(e) {
+      draggedEl = e.currentTarget;
+      e.currentTarget.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', e.currentTarget.dataset.index);
+      e.dataTransfer.setData('text/filename', e.currentTarget.dataset.filename);
+    }
+
+    function onDragEnd(e) {
+      e.currentTarget.classList.remove('dragging');
+      document.querySelectorAll('.item.drag-over').forEach(el => el.classList.remove('drag-over'));
+      draggedEl = null;
+    }
+
+    function onDragOver(e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const t = e.currentTarget;
+      if (t !== draggedEl) t.classList.add('drag-over');
+    }
+
+    function onDragLeave(e) {
+      e.currentTarget.classList.remove('drag-over');
+    }
+
+    function onDrop(e) {
+      e.preventDefault();
+      e.currentTarget.classList.remove('drag-over');
+      if (!draggedEl || draggedEl === e.currentTarget) return;
+
+      const items = [...document.querySelectorAll('.item')];
+      const fromIndex = items.indexOf(draggedEl);
+      const toIndex = items.indexOf(e.currentTarget);
+      if (fromIndex === -1 || toIndex === -1) return;
+
+      const order = items.map(el => el.dataset.filename);
+      const [removed] = order.splice(fromIndex, 1);
+      order.splice(toIndex, 0, removed);
+      render(order);
+    }
+
+    async function loadTitle() {
+      try {
+        const res = await fetch('/api/title');
+        if (res.ok) {
+          const text = (await res.text()).trim();
+          if (text) {
+            document.title = text;
+            document.getElementById('title').textContent = text;
+          }
+        }
+      } catch (_) {}
+    }
+
+    (async function init() {
+      await loadTitle();
+      try {
+        imageList = await loadImageList();
+        if (!imageList.length) {
+          app.innerHTML = '<p class="error">No images found in the img directory.</p>';
+          return;
+        }
+        render();
+      } catch (err) {
+        app.innerHTML = '<p class="error">' + (err.message || 'Failed to load images. Run the app with a local server (see README).') + '</p>';
+      }
+    })();
+  </script>
+</body>
+</html>
